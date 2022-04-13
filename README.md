@@ -8,6 +8,6 @@ Any-resolution training for high-resolution image synthesis.\
 
 <img src='img/github_loop.gif'>
 
-<img src='img/pano010-2.gif'>
-<img src='img/pano010.png'>
+<img src='img/pano010-2.gif' width=800px>
+<img src='img/pano010.png' width=800px>
 
