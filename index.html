@@ -1,0 +1,414 @@
+<html>
+
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-1">
+    <title>Latent Composition</title>
+
+    <link href="https://fonts.googleapis.com/css?family=Roboto" rel="stylesheet">
+    <script type="text/javascript" src="jquery.mlens-1.0.min.js"></script>
+    <script type="text/javascript" src="jquery.js"></script>
+    <style>
+        body {
+            font-family: 'Open-Sans', sans-serif;
+            font-weight: 300;
+            background-color: #fff;
+        }
+
+        .content {
+            width: 1000px;
+            padding: 25px 50px;
+            margin: 25px auto;
+            background-color: white;
+            box-shadow: 0px 0px 10px #999;
+            border-radius: 15px;
+        }
+
+        .contentblock {
+            width: 950px;
+            margin: 0 auto;
+            padding: 0;
+            border-spacing: 25px 0;
+        }
+
+        .contentblock td {
+            background-color: #fff;
+            padding: 25px 50px;
+            vertical-align: top;
+            box-shadow: 0px 0px 10px #999;
+            border-radius: 15px;
+        }
+
+        a,
+        a:visited {
+            color: #224b8d;
+            font-weight: 300;
+        }
+
+        #authors {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        #conference {
+            text-align: center;
+            margin-bottom: 20px;
+            font-style: italic;
+        }
+
+        #authors a {
+            margin: 0 10px;
+        }
+
+        h1 {
+            text-align: center;
+            font-size: 35px;
+            font-weight: 300;
+        }
+
+        h2 {
+            font-size: 30px;
+            font-weight: 300;
+        }
+
+        code {
+            display: block;
+            padding: 10px;
+            margin: 10px 10px;
+        }
+
+        p {
+            line-height: 25px;
+            text-align: justify;
+        }
+
+        p code {
+            display: inline;
+            padding: 0;
+            margin: 0;
+        }
+
+        #teasers {
+            margin: 0 auto;
+        }
+
+        #teasers td {
+            margin: 0 auto;
+            text-align: center;
+            padding: 5px;
+        }
+
+        #teasers img {
+            width: 250px;
+        }
+
+        #results img {
+            width: 133px;
+        }
+
+        #seeintodark {
+            margin: 0 auto;
+        }
+
+        #sift {
+            margin: 0 auto;
+        }
+
+        #sift img {
+            width: 250px;
+        }
+
+        .downloadpaper {
+            padding-left: 20px;
+            float: right;
+            text-align: center;
+        }
+
+        .downloadpaper a {
+            font-weight: bold;
+            text-align: center;
+        }
+
+        #demoframe {
+            border: 0;
+            padding: 0;
+            margin: 0;
+            width: 100%;
+            height: 340px;
+        }
+
+        #feedbackform {
+            border: 1px solid #ccc;
+            margin: 0 auto;
+            border-radius: 15px;
+        }
+
+        #eyeglass {
+            height: 530px;
+        }
+
+        #eyeglass #wrapper {
+            position: relative;
+            height: auto;
+            margin: 0 auto;
+            float: left;
+            width: 800px;
+        }
+
+        #mitnews {
+            font-weight: normal;
+            margin-top: 20px;
+            font-size: 14px;
+            width: 220px;
+        }
+
+        #mitnews a {
+            font-weight: normal;
+        }
+
+        .teaser-img {
+            width: 80%;
+						display: block;
+						margin-left: auto;
+						margin-right: auto;
+        }
+        .teaser-gif {
+						display: block;
+						margin-left: auto;
+						margin-right: auto;
+        }
+        .summary-img {
+            width: 100%;
+						display: block;
+						margin-left: auto;
+						margin-right: auto;
+        }
+
+        .iframe {
+            width: 100%;
+            height: 125%
+        }
+
+      .container {
+        display: flex;
+        align-items: center;
+        justify-content: center
+      }
+      .image {
+        flex-basis: 40%
+      }
+      .text {
+        font-size: 20px;
+        padding-left: 20px;
+      }
+			.center {
+				margin-left: auto;
+				margin-right: auto;
+			}
+			.boxshadow {
+				border: 1px solid;
+				padding: 10px;
+				box-shadow: 2px 2px 5px #888888;
+			}
+			.spacertr{
+				height: 8px;
+			}
+			.spacertd{
+				width: 40px;
+			}
+
+    </style>
+    <!-- Global site tag (gtag.js) - Google Analytics -->
+		<!--
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-98008272-2"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+
+        function gtag() {
+            dataLayer.push(arguments);
+        }
+        gtag('js', new Date());
+        gtag('config', 'UA-98008272-2');
+    </script>
+    <script type="text/javascript" async
+        src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/latest.js?config=TeX-MML-AM_CHTML">
+    </script>
+		-->
+
+</head>
+
+<body>
+
+    <div class="content">
+			<h1>Any-resolution training for high-resolution image synthesis</h1>
+        <p id="authors">
+            <a href="http://people.csail.mit.edu/lrchai/">Lucy Chai</a>
+            <a href="http://mgharbi.com/">Michael Gharbi</a>
+            <a href="https://research.adobe.com/person/eli-shechtman/">Eli Shechtman</a>
+            <a href="http://web.mit.edu/phillipi/">Phillip Isola</a>
+            <a href="https://richzhang.github.io/">Richard Zhang</a>
+            <br>
+            <!-- <strong>MIT Computer Science and Artificial Intelligence Laboratory</strong> -->
+            MIT Computer Science and Artificial Intelligence Laboratory & Adobe Research
+            <!-- <br><i>International Conference on Learning Representations 2021</i> -->
+        </p>
+				<font size="+2">
+					<p style="text-align: center;">
+						<a href="http://arxiv.org/abs/XXXX.XXXXX" target="_blank">[Paper]</a> &nbsp;&nbsp;&nbsp;&nbsp;
+						<a href="https://github.com/chail/anyres-gan" target="_blank">[Code]</a> &nbsp;&nbsp;&nbsp;&nbsp;
+						<a href="bibtex.txt" target="_blank">[Bibtex]</a>
+					</p>
+				</font>
+				<font size="+1">
+					<p style="text-align: center;">
+						Skip to:  &nbsp;&nbsp;
+						<a href="#abstract">[Abstract]</a> &nbsp;&nbsp;&nbsp;&nbsp;
+						<a href="#video">[Supplementary Video]</a> &nbsp;&nbsp;&nbsp;&nbsp;
+						<a href="#samples">[Random Samples]</a> &nbsp;&nbsp;&nbsp;&nbsp;
+					</p>
+				</font>
+        <p>
+            <img class='teaser-img' src='img/teaser.gif'></img>
+        </p>
+        <br>
+
+				<p id="abstract"><strong>Abstract: </strong>
+        Generative models operate at fixed resolution, even though
+        natural images come in a variety of sizes.
+        As high-resolution details are downsampled away, and low-resolution images
+        are discarded altogether, precious supervision is lost.
+        We argue that every pixel matters and create datasets with variable-size
+        images, collected at their native resolutions.
+        Taking advantage of this data is challenging; high-resolution processing is
+        costly, and current architectures can only process fixed-resolution data.
+        We introduce continuous-scale training, a process that samples
+        patches at random scales to train a new generator with variable
+        output resolutions.
+        First, conditioning the generator on a target scale allows us to generate
+        higher resolutions images than previously possible, without adding layers to the
+        model.
+        Second, by conditioning on continuous coordinates, we can sample patches that
+        still obey a consistent global layout, allowing for scalable training.
+        Controlled FFHQ experiments show our method takes advantage of the
+        multiresolution training data better than discrete multi-scale
+        approaches, achieving better FID scores and cleaner 
+        high-frequency details.
+        We also train on other natural image domains including churches,
+        mountains, and birds, and demonstrate arbitrary scale synthesis with
+        both coherent global layouts and realistic local details,
+        going beyond 2K resolution in our experiments. 
+				</p>
+        <br clear="all">
+    </div>
+    <div class="content" id="summary">
+
+        <h2 style="text-align:center;">Summary</h2>
+
+          <!--
+				<div class="container">
+					<div class="image">
+						<img src='img/dataset_construction.jpg' width=250px></img>
+					</div>
+					<div class="text">
+						<p>The typical preprocessing pipeline for unconditional image synthesize resizes all images to the same size, which discards available pixels. We propose a training procedure which can leverage these additional pixels from higher resolution images for image synthesis. </p>
+					</div>
+				</div>
+          -->
+        <p style="text-align: center;">The typical preprocessing pipeline for unconditional image synthesize resizes all images to the same size, which discards available pixels. We propose a training procedure which can leverage these additional pixels from higher resolution images for image synthesis.
+        </p>
+        <img class='summary-img' src='img/dataset_construction.jpg' style="width:40%;"></img>
+        <br>
+        <hr>
+        <p style="text-align: center;">We treat an image as a continuous 2D surface, where real images and synthesized samples correspond to discretizations of this surface. To deal with images of varied sizes, we sample patches of a fixed size at continuous resolutions and locations.</p>
+        <img class='summary-img' src='img/schematic_v5.jpg' style="width:80%;"></img>
+        <br>
+        <hr>
+        <p style="text-align: center;">Our training pipeline can handle images of different resolutions. We resize the FFHQ dataset to validate design decisions, and additionally collect images from Flickr to build our multi-size datasets.</p>
+        <img class='summary-img' src='img/dataset.jpg'></img>
+        <br>
+        <hr>
+        <p style="text-align: center;">By setting the coordinate grid appropriately, our generator is capable of synthesizing additional details as the resolution increases. 
+        </p>
+        <img class='summary-img' src='img/qualitative.jpg'></img>
+        <br>
+        <hr>
+        <p style="text-align: center;">As we extrapolate on this coordinate grid, the generator tends to preserve edges while textures deteriorate first.
+        </p>
+        <img class='summary-img' src='img/extrapolation.jpg'></img>
+        <br>
+        <hr>
+        <p style="text-align: center;">We can modify our approach to synthesize on a cylindrical image plane, which naturally creates 360 degree panoramas.
+        </p>
+        <img class='summary-img' src='img/pano010.gif'></img>
+			</div>
+      <div class="content" id="video">
+        <h2 style="text-align:center;">Supplementary Video</h2>
+        <video width=100% controls>
+            <source src="http://latent-composition.csail.mit.edu/other_projects/anyres_gan/supplementary_video_v4_1600_noaudio.mp4" type="video/mp4">
+        </video>
+      </div>
+
+			<div class="content" id="samples">
+        <h2 style="text-align:center;">Random Samples</h2>
+				<p style="text-align: center;">Click on the panels below to view randomly generated patches from our model in comparison to super-resolution models. Our model is trained to synthesize images at continuous resolutions from random noise samples, and thus is not directly supervised with low-resolution and high-resolution pairs from real images.</p>
+				<table style="text-align: center;" class="center">
+					<tr>
+						<td>
+							<div class="boxshadow">
+							<a href="http://latent-composition.csail.mit.edu/other_projects/anyres_gan/supplementary_html/birds/">
+								<p style="text-align: center;">Birds</p>
+								<img src="img/panel_birds.jpg" style="width:150px">
+							</a>
+							</div>
+						</td>
+						<td>
+							<div class="boxshadow">
+							<a href="http://latent-composition.csail.mit.edu/other_projects/anyres_gan/supplementary_html/church/">
+								<p style="text-align: center;">Church</p>
+								<img src="img/panel_church.jpg" style="width:150px">
+							</a>
+							</div>
+						</td>
+						<td>
+							<div class="boxshadow">
+							<a href="http://latent-composition.csail.mit.edu/other_projects/anyres_gan/supplementary_html/mountain/">
+								<p style="text-align: center;">Mountain</p>
+								<img src="img/panel_mountain.jpg" style="width:150px">
+							</a>
+							</div>
+						</td>
+						<td>
+							<div class="boxshadow">
+							<a href="http://latent-composition.csail.mit.edu/other_projects/anyres_gan/supplementary_html/ffhq6k/">
+								<p style="text-align: center;">FFHQ6K</p>
+								<img src="img/panel_ffhq.jpg" style="width:150px">
+							</a>
+							</div>
+            </td>
+					</tr>
+				</table>
+				<br>
+        <hr>
+    </div>      
+    <div class="content" id="references">
+
+        <h2>Reference</h2>
+
+				<p>L Chai, M Gharbi, E Shechtman, P Isola, R Zhang. Any-resolution training for high-resolution image synthesis. arXiv 2022.</p>
+
+        <code>
+			@article{chai2021anyresolution,<br>
+				&nbsp;&nbsp;title={Any-resolution training for high-resolution image synthesis.},<br>
+				&nbsp;&nbsp;author={Chai, Lucy and Gharbi, Michael and Shechtman, Eli and Isola, Phillip and Zhang, Richard},<br>
+				&nbsp;&nbsp;booktitle={arXiv preprint arXiv:XXXX.XXXXX},<br>
+				&nbsp;&nbsp;year={2022}<br>
+			 }
+				</code>
+    </div>      
+    <div class="content" id="acknowledgements">
+          <p><strong>Acknowledgements</strong>:
+           We would like to thank XXX for proofreading the paper. We thank Taesung Park for help in dataset collection. LC is supported by the National Science Foundation Graduate Research Fellowship under Grant No. 1745302 and Adobe Research Fellowship. This work was started while LC was an intern at Adobe Research.
+					 Recycling a familiar <a href="https://chail.github.io/latent-composition/">template</a> ;).
+    </div>
+</body>
+
+</html>
