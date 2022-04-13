@@ -1,10 +1,10 @@
 # Anyres-GAN
 [Project Page](https://chail.github.io/anyres-gan/) | [Paper](http://arxiv.org/abs/XXXX.XXXXX) | [Bibtex](./bibtex.txt)
 
-Any-resolution training for high-resolution image synthesis
+Any-resolution training for high-resolution image synthesis.\
 [Lucy Chai](http://people.csail.mit.edu/lrchai/), [Michael Gharbi](http://mgharbi.com/), [Eli Shechtman](https://research.adobe.com/person/eli-shechtman/), [Phillip Isola](http://web.mit.edu/phillipi/), [Richard Zhang](https://richzhang.github.io/)
 
-Code will be coming soon!
+*Code will be coming soon!*
 
 <img src='img/github_loop.gif'>
 
