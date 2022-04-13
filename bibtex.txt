@@ -1,0 +1,6 @@
+@article{chai2022anyresolution,
+	title={Any-resolution training for high-resolution image synthesis.},
+	author={Chai, Lucy and Gharbi, Michael and Shechtman, Eli and Isola, Phillip and Zhang, Richard},
+    journal={arXiv preprint arXiv:XXXX.XXXXX},
+	year={2022}
+}
