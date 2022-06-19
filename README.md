@@ -26,7 +26,7 @@ Any-resolution Training for High-resolution Image Synthesis.\
 
 ## Colab
 
-[Interactive Demo](TODO): Try our interactive demo here! Does not require local installations. 
+[Interactive Demo](https://colab.research.google.com/drive/1C-l70J7hrbKgaLaMwuAPcEzlrEVuyeko?usp=sharing): Try our interactive demo here! Does not require local installations. 
 
 <a name="setup"/>
 
