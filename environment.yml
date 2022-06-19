@@ -1,0 +1,25 @@
+name: anyres-gan
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  - python=3.8
+  - cudatoolkit=11.3
+  - pytorch=1.10.1
+  - torchvision=0.11.2
+  - cudnn
+  - numpy
+  - pandas
+  - jupyter
+  - pip
+  - tensorboard
+  - tqdm
+  - ipython
+  - pillow
+  - pip:
+     - lpips
+     - ninja
+     - ipywidgets
+     - ipyevents
+     - click
+     - setuptools==59.5.0

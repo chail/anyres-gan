@@ -1,0 +1,1119 @@
+--- ./stylegan3/train.py	2021-11-24 13:11:24.000000000 -0500
++++ train.py	2022-05-17 17:39:19.470176637 -0400
+@@ -75,6 +75,12 @@
+     print(f'Dataset resolution:  {c.training_set_kwargs.resolution}')
+     print(f'Dataset labels:      {c.training_set_kwargs.use_labels}')
+     print(f'Dataset x-flips:     {c.training_set_kwargs.xflip}')
++    if 'patch' in c.G_kwargs.training_mode:
++        print(f'Patches path:        {c.patch_kwargs.path}')
++        print(f'Patches size:        {c.patch_kwargs.max_size} images')
++        print(f'Patches resolution:  {c.patch_kwargs.resolution}')
++        print(f'Patches labels:      {c.patch_kwargs.use_labels}')
++        print(f'Patches x-flips:     {c.patch_kwargs.xflip}')
+     print()
+ 
+     # Dry run?
+@@ -103,7 +109,11 @@
+     try:
+         dataset_kwargs = dnnlib.EasyDict(class_name='training.dataset.ImageFolderDataset', path=data, use_labels=True, max_size=None, xflip=False)
+         dataset_obj = dnnlib.util.construct_class_by_name(**dataset_kwargs) # Subclass of training.dataset.Dataset.
++        try:
+         dataset_kwargs.resolution = dataset_obj.resolution # Be explicit about resolution.
++        except AssertionError:
++            print("Cannot determine default dataset resolution, will try to use specified arguments")
++            dataset_kwargs.resolution = None
+         dataset_kwargs.use_labels = dataset_obj.has_labels # Be explicit about labels.
+         dataset_kwargs.max_size = len(dataset_obj) # Be explicit about dataset size.
+         return dataset_kwargs, dataset_obj.name
+@@ -161,28 +171,32 @@
+ @click.option('--workers',      help='DataLoader worker processes', metavar='INT',              type=click.IntRange(min=1), default=3, show_default=True)
+ @click.option('-n','--dry-run', help='Print training options and exit',                         is_flag=True)
+ 
+-def main(**kwargs):
+-    """Train a GAN using the techniques described in the paper
+-    "Alias-Free Generative Adversarial Networks".
++# additional base options
++@click.option('--training_mode', help='generator training mode', type=click.Choice(['global', 'patch', 'global-360']), required=True)
++@click.option('--data_resolution', help='LR dataset resolution (specify if images are not preprocessed to same size and square)', type=click.IntRange(min=0))
++@click.option('--random_crop', help='random crop image on LR dataset (specify if images are not preprocessed to same size and square)', metavar='BOOL', type=bool, default=False, show_default=True)
++@click.option('--data_max_size', help='LR dataset max number of images', type=click.IntRange(min=0))
++@click.option('--g_size', help='size of G (if different from dataset size)', type=click.IntRange(min=0))
++
++# additional options for patch model
++@click.option('--teacher', help='teacher checkpoint', metavar='[PATH|URL]',  type=str)
++@click.option('--teacher_lambda', help='teacher regularization weight', metavar='FLOAT', type=click.FloatRange(min=0), default=1.0, show_default=True)
++@click.option('--teacher_mode',  help='teacher loss mode', type=click.Choice(['inverse', 'forward']), default='forward', show_default=True)
++@click.option('--scale_anneal', help='scale annealing rate (-1 for no annealing)', metavar='FLOAT', type=click.FloatRange(min=-1), default=-1, show_default=True)
++@click.option('--scale_min',  help='minimum sampled scale (leave blank to use image native resolution)', metavar='FLOAT', type=click.FloatRange(min=0))
++@click.option('--scale_max',  help='maximum sampled scale', metavar='FLOAT', type=click.FloatRange(min=0), default=1.0, show_default=True)
++@click.option('--base_probability', help='probability to sample from LR dataset with identity transform', metavar='FLOAT', type=click.FloatRange(min=0), default=0.5, show_default=True)
++@click.option('--data_hr', help='HR patch dataset path', metavar='[ZIP|DIR]', type=str)
++@click.option('--patch_crop', help='perform random cropping on non-square images (on patch dataset)', metavar='BOOL', type=bool, default=False, show_default=True)
++@click.option('--data_hr_max_size', help='patch dataset max number of images', type=click.IntRange(min=0))
++@click.option('--scale_mapping_min', help='normalization minimum for scale mapping branch (size = g_size*scale_mapping_min)', type=click.IntRange(min=0))
++@click.option('--scale_mapping_max', help='normalization maximum for scale mapping branch (size = g_size*scale_mapping_max)', type=click.IntRange(min=0))
++@click.option('--scale_mapping_norm', help='normalization type for scale mapping branch', type=click.Choice(['positive', 'zerocentered']), default='positive')
+ 
+-    Examples:
++# additional options for 360 model
++@click.option('--fov', help='fov for one frame in the 360 model', type=click.IntRange(min=0), default=60, show_default=True)
+ 
+-    \b
+-    # Train StyleGAN3-T for AFHQv2 using 8 GPUs.
+-    python train.py --outdir=~/training-runs --cfg=stylegan3-t --data=~/datasets/afhqv2-512x512.zip \\
+-        --gpus=8 --batch=32 --gamma=8.2 --mirror=1
+-
+-    \b
+-    # Fine-tune StyleGAN3-R for MetFaces-U using 1 GPU, starting from the pre-trained FFHQ-U pickle.
+-    python train.py --outdir=~/training-runs --cfg=stylegan3-r --data=~/datasets/metfacesu-1024x1024.zip \\
+-        --gpus=8 --batch=32 --gamma=6.6 --mirror=1 --kimg=5000 --snap=5 \\
+-        --resume=https://api.ngc.nvidia.com/v2/models/nvidia/research/stylegan3/versions/1/files/stylegan3-r-ffhqu-1024x1024.pkl
+-
+-    \b
+-    # Train StyleGAN2 for FFHQ at 1024x1024 resolution using 8 GPUs.
+-    python train.py --outdir=~/training-runs --cfg=stylegan2 --data=~/datasets/ffhq-1024x1024.zip \\
+-        --gpus=8 --batch=32 --gamma=10 --mirror=1 --aug=noaug
+-    """
++def main(**kwargs):
+ 
+     # Initialize config.
+     opts = dnnlib.EasyDict(kwargs) # Command line arguments.
+@@ -200,6 +214,61 @@
+         raise click.ClickException('--cond=True requires labels specified in dataset.json')
+     c.training_set_kwargs.use_labels = opts.cond
+     c.training_set_kwargs.xflip = opts.mirror
++    if opts.data_max_size:
++        c.training_set_kwargs.max_size = opts.max_size
++    if opts.data_resolution:
++        if c.training_set_kwargs.resolution != opts.data_resolution:
++            print("using specified data resolution %d rather than default" % (opts.data_resolution))
++            c.training_set_kwargs.resolution = opts.data_resolution
++    c.training_set_kwargs.crop_image = opts.random_crop
++    # by this point, resolution should be determined
++    # either from init_dataset function or opts.data_resolution
++    assert(c.training_set_kwargs.resolution is not None)
++
++    # set up training mode
++    training_mode = c.G_kwargs.training_mode = opts.training_mode
++    # set up generator size
++    if opts.g_size is not None:
++        assert(opts.g_size == c.training_set_kwargs.resolution)
++    else:
++        opts.g_size = c.training_set_kwargs.resolution
++    if 'patch' in training_mode:
++        # patch dataset kwargs
++        patch_kwargs = dnnlib.EasyDict(
++            class_name='training.dataset.ImagePatchDataset',
++            path=opts.data_hr, resolution=opts.g_size,
++            scale_min=opts.scale_min, scale_max=opts.scale_max,
++            scale_anneal=opts.scale_anneal, random_crop=opts.patch_crop,
++            use_labels=True, max_size=None, xflip=False)
++        patch_obj = dnnlib.util.construct_class_by_name(**patch_kwargs) # gets initial args
++        patch_name = patch_obj.name
++        patch_kwargs.resolution = patch_obj.resolution # Be explicit about resolution.
++        patch_kwargs.use_labels = patch_obj.has_labels # Be explicit about labels.
++        patch_kwargs.max_size = len(patch_obj) # Be explicit about dataset size.
++        c.patch_kwargs = patch_kwargs
++        c.patch_kwargs.use_labels = opts.cond
++        c.patch_kwargs.xflip = opts.mirror
++        if opts.data_hr_max_size:
++            c.patch_kwargs.max_size = opts.data_hr_max_size
++        # added G_kwargs
++        c.G_kwargs.scale_mapping_kwargs = dnnlib.EasyDict(
++            scale_mapping_min = opts.scale_mapping_min,
++            scale_mapping_max = opts.scale_mapping_max,
++            scale_mapping_norm = opts.scale_mapping_norm
++        )
++        # added training options
++        c.added_kwargs = dnnlib.EasyDict(
++            img_size=opts.g_size,
++            teacher=opts.teacher,
++            teacher_lambda=opts.teacher_lambda,
++            teacher_mode=opts.teacher_mode,
++            scale_min=opts.scale_min,
++            scale_max=opts.scale_max,
++            scale_anneal=opts.scale_anneal,
++            base_probability=opts.base_probability,
++        )
++    elif '360' in training_mode:
++        c.G_kwargs.fov = opts.fov
+ 
+     # Hyperparameters & settings.
+     c.num_gpus = opts.gpus
+@@ -218,6 +287,8 @@
+     c.kimg_per_tick = opts.tick
+     c.image_snapshot_ticks = c.network_snapshot_ticks = opts.snap
+     c.random_seed = c.training_set_kwargs.random_seed = opts.seed
++    if 'patch' in training_mode:
++        c.patch_kwargs.random_seed = opts.seed
+     c.data_loader_kwargs.num_workers = opts.workers
+ 
+     # Sanity checks.
+@@ -261,6 +332,9 @@
+     # Resume.
+     if opts.resume is not None:
+         c.resume_pkl = opts.resume
++
++    if opts.teacher is not None or opts.resume is not None:
++        # disable rampups for finetuning or resuming models
+         c.ada_kimg = 100 # Make ADA react faster at the beginning.
+         c.ema_rampup = None # Disable EMA rampup.
+         c.loss_kwargs.blur_init_sigma = 0 # Disable blur rampup.
+diff -bur ./stylegan3/training/dataset.py training/dataset.py
+--- ./stylegan3/training/dataset.py	2021-11-24 13:11:24.000000000 -0500
++++ training/dataset.py	2022-06-17 23:26:59.794824950 -0400
+@@ -16,10 +16,12 @@
+ import torch
+ import dnnlib
+ 
+-try:
+-    import pyspng
+-except ImportError:
+-    pyspng = None
++pyspng = None # disable pyspng for image resizing on load
++# https://stackoverflow.com/questions/51152059/pillow-in-python-wont-let-me-open-image-exceeds-limit
++PIL.Image.MAX_IMAGE_PIXELS = 933120000
++from util import patch_util
++import random
++
+ 
+ #----------------------------------------------------------------------------
+ 
+@@ -85,6 +87,7 @@
+         return self._raw_idx.size
+ 
+     def __getitem__(self, idx):
++        if not self.is_patch: # full image loader 
+         image = self._load_raw_image(self._raw_idx[idx])
+         assert isinstance(image, np.ndarray)
+         assert list(image.shape) == self.image_shape
+@@ -93,6 +96,14 @@
+             assert image.ndim == 3 # CHW
+             image = image[:, :, ::-1]
+         return image.copy(), self.get_label(idx)
++        else: # image patch loader
++            # handle xflips when loading the image
++            data = self._load_raw_image(self._raw_idx[idx], self._xflip[idx])
++            assert isinstance(data, dict)
++            assert list(data['image'].shape) == self.image_shape
++            assert data['image'].dtype == np.uint8
++            data['image'] = data['image'].copy()
++            return data, self.get_label(idx)
+ 
+     def get_label(self, idx):
+         label = self._get_raw_labels()[self._raw_idx[idx]]
+@@ -153,18 +164,30 @@
+ 
+ #----------------------------------------------------------------------------
+ 
+-class ImageFolderDataset(Dataset):
++class BaseImageDataset(Dataset):
+     def __init__(self,
+         path,                   # Path to directory or zip.
+         resolution      = None, # Ensure specific resolution, None = highest available.
+         **super_kwargs,         # Additional arguments for the Dataset base class.
+     ):
++
+         self._path = path
+         self._zipfile = None
+ 
+         if os.path.isdir(self._path):
+             self._type = 'dir'
+-            self._all_fnames = {os.path.relpath(os.path.join(root, fname), start=self._path) for root, _dirs, files in os.walk(self._path) for fname in files}
++            if os.path.isfile(self._path + '_cache.txt'):
++                # use cache file if it exists
++                with open(self._path + '_cache.txt') as cache:
++                    self._all_fnames = set([line.strip() for line in cache])
++            else:
++                print("Walking dataset...")
++                self._all_fnames = [os.path.relpath(os.path.join(root, fname), start=self._path)
++                                    for root, _dirs, files in os.walk(self._path, followlinks=True) for fname in files]
++                with open(self._path + '_cache.txt', 'w') as cache:
++                    [cache.write("%s\n" % fname) for fname in self._all_fnames]
++                self._all_fnames = set(self._all_fnames)
++                print("Done walking")
+         elif self._file_ext(self._path) == '.zip':
+             self._type = 'zip'
+             self._all_fnames = set(self._get_zipfile().namelist())
+@@ -177,9 +200,12 @@
+             raise IOError('No image files found in the specified path')
+ 
+         name = os.path.splitext(os.path.basename(self._path))[0]
+-        raw_shape = [len(self._image_fnames)] + list(self._load_raw_image(0).shape)
+-        if resolution is not None and (raw_shape[2] != resolution or raw_shape[3] != resolution):
+-            raise IOError('Image files do not match the specified resolution')
++        if resolution is not None:
++            raw_shape = [len(self._image_fnames)] + [3, resolution, resolution]
++        else:
++            # do not resize it to determine initial shape (will fail if images not square)
++            raw_shape = [len(self._image_fnames)] + list(self._load_raw_image(0, resize=False).shape)
++
+         super().__init__(name=name, raw_shape=raw_shape, **super_kwargs)
+ 
+     @staticmethod
+@@ -209,18 +235,6 @@
+     def __getstate__(self):
+         return dict(super().__getstate__(), _zipfile=None)
+ 
+-    def _load_raw_image(self, raw_idx):
+-        fname = self._image_fnames[raw_idx]
+-        with self._open_file(fname) as f:
+-            if pyspng is not None and self._file_ext(fname) == '.png':
+-                image = pyspng.load(f.read())
+-            else:
+-                image = np.array(PIL.Image.open(f))
+-        if image.ndim == 2:
+-            image = image[:, :, np.newaxis] # HW => HWC
+-        image = image.transpose(2, 0, 1) # HWC => CHW
+-        return image
+-
+     def _load_raw_labels(self):
+         fname = 'dataset.json'
+         if fname not in self._all_fnames:
+@@ -235,4 +249,116 @@
+         labels = labels.astype({1: np.int64, 2: np.float32}[labels.ndim])
+         return labels
+ 
+-#----------------------------------------------------------------------------
++
++class ImageFolderDataset(BaseImageDataset):
++    def __init__(self,
++        path,                   # Path to directory or zip.
++        resolution = None,      # Ensure specific resolution, None = highest available.
++        crop_image = False,     # default: assumes inputs are square images, if True it will perform a random crop
++        **super_kwargs,         # Additional arguments for the Dataset base class.
++    ):
++        self.crop_image = crop_image
++        self.is_patch = False
++        super().__init__(path=path, resolution=resolution,  **super_kwargs)
++
++    def _load_raw_image(self, raw_idx, resize=True):
++        fname = self._image_fnames[raw_idx]
++        with self._open_file(fname) as f:
++            if pyspng is not None and self._file_ext(fname) == '.png':
++                image = pyspng.load(f.read())
++            else:
++                image = PIL.Image.open(f).convert('RGB')
++                w, h = image.size
++                if self.crop_image and w != h:
++                    # perform random crop if needed
++                    min_size = min(w, h)
++                    if w == min_size:
++                        x_start = 0
++                        y_start = random.randint(0, h - min_size)
++                    else:
++                        x_start = random.randint(0, w - min_size)
++                        y_start = 0
++                    image = image.crop((x_start, y_start, x_start+min_size, y_start+min_size))
++                if resize:
++                    # at this point it should be square
++                    assert(image.size[0] == image.size[1])
++                    target_size = tuple(self.image_shape[1:])
++                    if image.size != target_size:
++                        # it should only downsize, but there are a small number
++                        # of images in the datasets that are a few pixels
++                        # smaller than 256, so allow a small leeway
++                        assert(target_size[-1] < image.size[-1] + 10)
++                        image = image.resize(target_size, PIL.Image.ANTIALIAS)
++                image = np.array(image)
++        if image.ndim == 2:
++            image = image[:, :, np.newaxis] # HW => HWC
++        image = image.transpose(2, 0, 1) # HWC => CHW
++        return image
++
++class ImagePatchDataset(BaseImageDataset):
++    def __init__(self,
++        path,                   # Path to directory or zip.
++        resolution,             # patch size
++        scale_min,              # minimum scale of the patches  (largest image size)
++        scale_max,              # maximum scale of the patches (smallest image size)
++        scale_anneal=-1,        # annealing rate
++        random_crop=True,       # add random crop for non-square images
++        **super_kwargs,         # Additional arguments for the Dataset base class.
++    ):
++        assert(resolution is not None) # patch resolution must be specified
++
++        # annealing not implemented, need to update iteration counter and
++        # adjust counter when resuming training
++        assert(scale_anneal == -1)
++
++        # crop sampler
++        self.patch_size = resolution
++        self.random_crop = random_crop
++        self.sampler = patch_util.PatchSampler(
++            patch_size=self.patch_size, scale_anneal=scale_anneal,
++            min_scale=scale_min, max_scale=scale_max)
++        self.is_patch = True
++
++        super().__init__(path=path, resolution=resolution,  **super_kwargs)
++
++    def _load_raw_image(self, raw_idx, is_flipped):
++        fname = self._image_fnames[raw_idx]
++        with self._open_file(fname) as f:
++            if pyspng is not None and self._file_ext(fname) == '.png':
++                image = pyspng.load(f.read())
++            else:
++                image = PIL.Image.open(f).convert('RGB')
++
++        # first, flip image if necessary
++        if is_flipped:
++            image = image.transpose(PIL.Image.FLIP_LEFT_RIGHT)
++
++        # add random crop if necessary
++        if self.random_crop:
++            w, h = image.size
++            min_size = min(w, h)
++            x_start = random.randint(0, max(0, w - min_size))
++            y_start = random.randint(0, max(0, h - min_size))
++            image = image.crop((x_start, y_start, x_start+min_size, y_start+min_size))
++        else:
++            # otherwise, center crop
++            w, h = image.size
++            min_size = min(w, h)
++            if w != h:
++                if w == min_size:
++                    x_start = 0
++                    y_start = (h - min_size) // 2
++                else:
++                    x_start = (w - min_size) // 2
++                    y_start = 0
++                image = image.crop((x_start, y_start, x_start+min_size, y_start+min_size))
++
++        # sample the resize and crop parameters
++        crop, params = self.sampler.sample_patch(image)
++        image = np.asarray(crop)
++        image = image.transpose(2, 0, 1) # HWC => CHW
++        data = {
++            'image': image,
++            'params': params,
++        }
++        return data
+diff -bur ./stylegan3/training/loss.py training/loss.py
+--- ./stylegan3/training/loss.py	2021-11-24 13:11:24.000000000 -0500
++++ training/loss.py	2022-06-17 23:33:28.910631833 -0400
+@@ -14,6 +14,11 @@
+ from torch_utils.ops import conv2d_gradfix
+ from torch_utils.ops import upfirdn2d
+ 
++# added imports
++from metrics import equivariance
++from util import losses, util, patch_util
++import random
++
+ #----------------------------------------------------------------------------
+ 
+ class Loss:
+@@ -22,8 +27,23 @@
+ 
+ #----------------------------------------------------------------------------
+ 
++def apply_affine_batch(img, transform):
++    # hacky .. apply affine transformation with cuda kernel in batch form
++    crops = []
++    masks = []
++    for i, t in zip(img, transform):
++        crop, mask = equivariance.apply_affine_transformation(
++            i[None], t.inverse())
++        crops.append(crop)
++        masks.append(mask)
++    crops = torch.cat(crops, dim=0)
++    masks = torch.cat(masks, dim=0)
++    return crops, masks
++
+ class StyleGAN2Loss(Loss):
+-    def __init__(self, device, G, D, augment_pipe=None, r1_gamma=10, style_mixing_prob=0, pl_weight=0, pl_batch_shrink=2, pl_decay=0.01, pl_no_weight_grad=False, blur_init_sigma=0, blur_fade_kimg=0):
++    def __init__(self, device, G, D, augment_pipe=None, r1_gamma=10, style_mixing_prob=0, pl_weight=0, pl_batch_shrink=2,
++                 pl_decay=0.01, pl_no_weight_grad=False, blur_init_sigma=0,
++                 blur_fade_kimg=0, teacher=None, added_kwargs=None):
+         super().__init__()
+         self.device             = device
+         self.G                  = G
+@@ -39,14 +59,51 @@
+         self.blur_init_sigma    = blur_init_sigma
+         self.blur_fade_kimg     = blur_fade_kimg
+ 
+-    def run_G(self, z, c, update_emas=False):
+-        ws = self.G.mapping(z, c, update_emas=update_emas)
++        self.teacher = teacher
++        self.added_kwargs = added_kwargs
++        self.training_mode = self.G.training_mode
++        if self.teacher is not None:
++            self.loss_l1 = losses.Masked_L1_Loss().to(device)
++            self.loss_lpips = losses.Masked_LPIPS_Loss(net='alex', device=device)
++            util.set_requires_grad(False, self.loss_lpips)
++            util.set_requires_grad(False, self.teacher)
++
++    def style_mix(self, z, c, ws):
+         if self.style_mixing_prob > 0:
+             with torch.autograd.profiler.record_function('style_mixing'):
+                 cutoff = torch.empty([], dtype=torch.int64, device=ws.device).random_(1, ws.shape[1])
+                 cutoff = torch.where(torch.rand([], device=ws.device) < self.style_mixing_prob, cutoff, torch.full_like(cutoff, ws.shape[1]))
+                 ws[:, cutoff:] = self.G.mapping(torch.randn_like(z), c, update_emas=False)[:, cutoff:]
+-        img = self.G.synthesis(ws, update_emas=update_emas)
++        return ws
++
++    def run_G(self, z, c, transform, update_emas=False):
++        mapped_scale = None
++        crop_fn = None
++        if 'patch' in self.training_mode:
++            ws = self.G.mapping(z, c, update_emas=update_emas)
++            scale, mapped_scale = patch_util.compute_scale_inputs(self.G, ws, transform)
++            ws = self.style_mix(z, c, ws)
++            img = self.G.synthesis(ws, mapped_scale=mapped_scale, transform=transform, update_emas=update_emas)
++        elif '360' in self.training_mode:
++            ws = self.G.mapping(z, c, update_emas=update_emas)
++            ws = self.style_mix(z, c, ws)
++            input_layer = self.G.synthesis.input
++            crop_start = random.randint(0, 360 // input_layer.fov * input_layer.frame_size[0] - 1)
++            crop_fn = lambda grid : grid[:, :, crop_start:crop_start+input_layer.size[0], :]
++            img_base = self.G.synthesis(ws, crop_fn=crop_fn, update_emas=update_emas)
++            crop_shift = crop_start + input_layer.frame_size[0]
++            # generate shifted frame for cross-frame discriminator
++            crop_fn_shift = lambda grid : grid[:, :, crop_shift:crop_shift+input_layer.size[0], :]
++            img_shifted = self.G.synthesis(ws, crop_fn=crop_fn_shift, update_emas=update_emas)
++            img_splice = torch.cat([img_base, img_shifted], dim=3)
++            img_size = img_base.shape[-1]
++            splice_start = random.randint(0, img_size)
++            img = img_splice[:, :, :, splice_start:splice_start+img_size]
++        elif 'global' in self.training_mode:
++            ws = self.G.mapping(z, c, update_emas=update_emas)
++            ws = self.style_mix(z, c, ws)
++            assert(transform is None)
++            img = self.G.synthesis(ws, transform=transform, update_emas=update_emas)
+         return img, ws
+ 
+     def run_D(self, img, c, blur_sigma=0, update_emas=False):
+@@ -60,7 +117,8 @@
+         logits = self.D(img, c, update_emas=update_emas)
+         return logits
+ 
+-    def accumulate_gradients(self, phase, real_img, real_c, gen_z, gen_c, gain, cur_nimg):
++    def accumulate_gradients(self, phase, real_img, real_c, transform, gen_z,
++                             gen_c, gain, cur_nimg, min_scale, max_scale):
+         assert phase in ['Gmain', 'Greg', 'Gboth', 'Dmain', 'Dreg', 'Dboth']
+         if self.pl_weight == 0:
+             phase = {'Greg': 'none', 'Gboth': 'Gmain'}.get(phase, phase)
+@@ -71,12 +129,49 @@
+         # Gmain: Maximize logits for generated images.
+         if phase in ['Gmain', 'Gboth']:
+             with torch.autograd.profiler.record_function('Gmain_forward'):
+-                gen_img, _gen_ws = self.run_G(gen_z, gen_c)
++                gen_img, _gen_ws = self.run_G(gen_z, gen_c, transform)
++                # vutils.save_image(gen_img, 'out_fake_patch.png', range=(-1, 1),
++                #                   normalize=True, nrow=4)
+                 gen_logits = self.run_D(gen_img, gen_c, blur_sigma=blur_sigma)
+                 training_stats.report('Loss/scores/fake', gen_logits)
+                 training_stats.report('Loss/signs/fake', gen_logits.sign())
+                 loss_Gmain = torch.nn.functional.softplus(-gen_logits) # -log(sigmoid(gen_logits))
+                 training_stats.report('Loss/G/loss', loss_Gmain)
++                training_stats.report('Scale/G/min_scale', min_scale)
++                training_stats.report('Scale/G/max_scale', max_scale)
++                if self.teacher is not None and self.added_kwargs.teacher_lambda > 0:
++                    teacher_img = self.teacher(gen_z, gen_c)
++                    if self.added_kwargs.teacher_mode == 'forward':
++                        teacher_crop, teacher_mask = apply_affine_batch(teacher_img, transform)
++                        # removes the border around the above mask 
++                        # (mask should be all ones bc zooming in)
++                        teacher_mask = torch.ones_like(teacher_mask)
++                        l1_loss = self.loss_l1(gen_img, teacher_crop,
++                                               teacher_mask[:, :1])
++                        lpips_loss = self.loss_lpips(
++                            losses.adaptive_downsample256(gen_img),
++                            losses.adaptive_downsample256(teacher_crop),
++                            losses.adaptive_downsample256(teacher_mask[:, :1],
++                                                       mode='nearest')
++                        )
++                    elif self.added_kwargs.teacher_mode == 'inverse':
++                        out_crop, out_mask = apply_affine_batch(gen_img, transform.inverse())
++                        l1_loss = self.loss_l1(out_crop, teacher_img,
++                                               out_mask[:, :1])
++                        lpips_loss = self.loss_lpips(
++                            losses.adaptive_downsample256(out_crop),
++                            losses.adaptive_downsample256(teacher_img),
++                            losses.adaptive_downsample256(out_mask[:, :1],
++                                                       mode='nearest')
++                        )
++                    else:
++                        assert(False)
++                    teacher_loss = (l1_loss + lpips_loss)[:, None]
++                    loss_Gmain = (loss_Gmain + self.added_kwargs.teacher_lambda
++                                  * teacher_loss)
++                    training_stats.report('Loss/G/loss_teacher_l1', l1_loss)
++                    training_stats.report('Loss/G/loss_teacher_lpips', lpips_loss)
++                    training_stats.report('Loss/G/loss_total', loss_Gmain)
+             with torch.autograd.profiler.record_function('Gmain_backward'):
+                 loss_Gmain.mean().mul(gain).backward()
+ 
+@@ -84,7 +179,9 @@
+         if phase in ['Greg', 'Gboth']:
+             with torch.autograd.profiler.record_function('Gpl_forward'):
+                 batch_size = gen_z.shape[0] // self.pl_batch_shrink
+-                gen_img, gen_ws = self.run_G(gen_z[:batch_size], gen_c[:batch_size])
++                gen_img, gen_ws = self.run_G(gen_z[:batch_size],
++                                             gen_c[:batch_size],
++                                             transform[:batch_size])
+                 pl_noise = torch.randn_like(gen_img) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
+                 with torch.autograd.profiler.record_function('pl_grads'), conv2d_gradfix.no_weight_gradients(self.pl_no_weight_grad):
+                     pl_grads = torch.autograd.grad(outputs=[(gen_img * pl_noise).sum()], inputs=[gen_ws], create_graph=True, only_inputs=True)[0]
+@@ -102,7 +199,7 @@
+         loss_Dgen = 0
+         if phase in ['Dmain', 'Dboth']:
+             with torch.autograd.profiler.record_function('Dgen_forward'):
+-                gen_img, _gen_ws = self.run_G(gen_z, gen_c, update_emas=True)
++                gen_img, _gen_ws = self.run_G(gen_z, gen_c, transform, update_emas=True)
+                 gen_logits = self.run_D(gen_img, gen_c, blur_sigma=blur_sigma, update_emas=True)
+                 training_stats.report('Loss/scores/fake', gen_logits)
+                 training_stats.report('Loss/signs/fake', gen_logits.sign())
+diff -bur ./stylegan3/training/networks_stylegan3.py training/networks_stylegan3.py
+--- ./stylegan3/training/networks_stylegan3.py	2021-11-24 13:11:24.000000000 -0500
++++ training/networks_stylegan3.py	2022-06-14 22:42:13.642624353 -0400
+@@ -18,6 +18,8 @@
+ from torch_utils.ops import conv2d_gradfix
+ from torch_utils.ops import filtered_lrelu
+ from torch_utils.ops import bias_act
++import math
++import random
+ 
+ #----------------------------------------------------------------------------
+ 
+@@ -173,6 +175,7 @@
+         size,           # Output spatial size: int or [width, height].
+         sampling_rate,  # Output sampling rate.
+         bandwidth,      # Output bandwidth.
++        margin_size,    # Extra margin on input.
+     ):
+         super().__init__()
+         self.w_dim = w_dim
+@@ -180,6 +183,7 @@
+         self.size = np.broadcast_to(np.asarray(size), [2])
+         self.sampling_rate = sampling_rate
+         self.bandwidth = bandwidth
++        self.margin_size = margin_size
+ 
+         # Draw random frequencies from uniform 2D disc.
+         freqs = torch.randn([self.channels, 2])
+@@ -195,9 +199,12 @@
+         self.register_buffer('freqs', freqs)
+         self.register_buffer('phases', phases)
+ 
+-    def forward(self, w):
++    def forward(self, w, transform=None, **kwargs):
+         # Introduce batch dimension.
+-        transforms = self.transform.unsqueeze(0) # [batch, row, col]
++        if transform is None:
++            # sanity check; should not modify transform from identity
++            assert(torch.equal(self.transform, torch.eye(3, 3).to(self.transform.device)))
++            transform = self.transform.unsqueeze(0) # [batch, row, col]
+         freqs = self.freqs.unsqueeze(0) # [batch, channel, xy]
+         phases = self.phases.unsqueeze(0) # [batch, channel]
+ 
+@@ -212,7 +219,7 @@
+         m_t = torch.eye(3, device=w.device).unsqueeze(0).repeat([w.shape[0], 1, 1]) # Inverse translation wrt. resulting image.
+         m_t[:, 0, 2] = -t[:, 2] # t'_x
+         m_t[:, 1, 2] = -t[:, 3] # t'_y
+-        transforms = m_r @ m_t @ transforms # First rotate resulting image, then translate, and finally apply user-specified transform.
++        transforms = m_r @ m_t @ transform # First rotate resulting image, then translate, and finally apply user-specified transform.
+ 
+         # Transform frequencies.
+         phases = phases + (freqs @ transforms[:, :2, 2:]).squeeze(2)
+@@ -247,6 +254,120 @@
+             f'w_dim={self.w_dim:d}, channels={self.channels:d}, size={list(self.size)},',
+             f'sampling_rate={self.sampling_rate:g}, bandwidth={self.bandwidth:g}'])
+ 
++
++@persistence.persistent_class
++class SynthesisInput360(torch.nn.Module):
++    def __init__(self,
++        w_dim,          # Intermediate latent (W) dimensionality.
++        channels,       # Number of output channels.
++        size,           # Output spatial size: int or [width, height].
++        sampling_rate,  # Output sampling rate.
++        bandwidth,      # Output bandwidth.
++        margin_size,    # Extra margin on input.
++        fov,            # panorama FOV.
++    ):
++        super().__init__()
++        self.w_dim = w_dim
++        self.channels = channels
++        self.fov = fov
++        self.size = np.broadcast_to(np.asarray(size), [2])
++        self.sampling_rate = sampling_rate
++        self.bandwidth = bandwidth
++        self.margin_size = margin_size
++        self.frame_size = self.size - 2 * self.margin_size
++
++        # Draw random frequencies from uniform 2D disc.
++        freqs = torch.randn([self.channels, 2])
++        radii = freqs.square().sum(dim=1, keepdim=True).sqrt()
++        freqs /= radii * radii.square().exp().pow(0.25)
++        freqs *= bandwidth
++        phases = torch.rand([self.channels]) - 0.5
++
++        # Setup parameters and buffers.
++        self.weight = torch.nn.Parameter(torch.randn([self.channels, self.channels]))
++        self.affine = FullyConnectedLayer(w_dim, 4, weight_init=0, bias_init=[1,0,0,0])
++        self.register_buffer('transform', torch.eye(3, 3)) # User-specified inverse transform wrt. resulting image.
++        self.register_buffer('freqs', freqs)
++        self.register_buffer('phases', phases)
++
++    def forward(self, w, transform=None, crop_fn=None):
++        # Introduce batch dimension.
++        if transform is None:
++            transforms = self.transform.unsqueeze(0) # [batch, row, col]
++        else:
++            transforms = transform
++        freqs = self.freqs.unsqueeze(0) # [batch, channel, xy]
++        phases = self.phases.unsqueeze(0) # [batch, channel]
++
++        # does not add learned rotation for 360 model
++        transforms = transforms.expand(w.shape[0], -1, -1)
++
++        # Dampen out-of-band frequencies that may occur due to the user-specified transform.
++        amplitudes = (1 - (freqs.norm(dim=2) - self.bandwidth) / (self.sampling_rate / 2 - self.bandwidth)).clamp(0, 1)
++
++        # Construct sampling grid.
++        theta = torch.eye(2, 3, device=w.device)
++        theta[0, 0] = 0.5 * self.size[0] / self.sampling_rate # tx
++        theta[1, 1] = 0.5 * self.size[1] / self.sampling_rate # ty
++        grid_width = self.frame_size[0] * 360 // self.fov + 2 * self.margin_size
++        grids = torch.nn.functional.affine_grid(theta.unsqueeze(0),
++                                                [1, 1, self.size[1], grid_width],
++                                                align_corners=False)
++        # extended grid to ensure that the x coordinate completes a full circle without padding
++        base_width = grid_width - 2*self.margin_size
++        corrected_x = torch.arange(-self.margin_size, base_width*2+self.margin_size, device=grids.device) / base_width  * 2 - 1
++        corrected_y = grids[0, :, 0, 1]
++        corrected_grids = torch.cat([corrected_x.view(1, 1, -1, 1).repeat(1, self.size[1], 1, 1),
++                                     corrected_y.view(1, -1, 1, 1).repeat(1, 1, grid_width+base_width, 1)], dim=3)
++        grids = corrected_grids
++
++        if crop_fn is None:
++            crop_start = random.randint(0, base_width - 1)
++            grids = grids[:, :, crop_start:crop_start+self.size[1], :]
++        else:
++            grids = crop_fn(grids)
++
++        # apply transformation first
++        rotation = transforms[:, :2, :2]
++        translation = transforms[:, :2, 2:].squeeze(2)
++        # normalize grid x s.t. transformations can operate on square affine ratio
++        grids_normalized = grids.clone()
++        min_bound = torch.min(grids_normalized[:, :, :, 0])
++        max_bound = torch.max(grids_normalized[:, :, :, 0])
++        target_range = torch.max(grids_normalized[:, :, :, 1]) - torch.min(grids_normalized[:, :, :, 1])
++        grids_normalized[:, :, :, 0] = (grids_normalized[:, :, :, 0] - min_bound) / (max_bound - min_bound)
++        grids_normalized[:, :, :, 0] = grids_normalized[:, :, :, 0] * target_range - target_range / 2
++        # # xT @ RT = (Rx)T --> it is transposed
++        grids_transformed = (grids_normalized.unsqueeze(3) @ rotation.permute(0, 2, 1).unsqueeze(1).unsqueeze(2)).squeeze(3)
++        grids_transformed = grids_transformed + translation.unsqueeze(1).unsqueeze(2)
++        grids_transformed[:, :, :, 0] = (grids_transformed[:, :, :, 0] + target_range / 2) / target_range * (max_bound - min_bound) + min_bound
++
++        # map discontinuous x-angle to continuous cylindrical coordinate
++        grids_transformed_sin = grids_transformed.clone()
++        grids_transformed_cos = grids_transformed.clone()
++        grids_transformed_sin[:, :, :, 0] = torch.sin(grids_transformed_sin[:, :, :, 0] * torch.tensor(math.pi))
++        grids_transformed_cos[:, :, :, 0] = torch.cos(grids_transformed_cos[:, :, :, 0] * torch.tensor(math.pi))
++
++        x_sin = (grids_transformed_sin.unsqueeze(3) @ freqs[:, :self.channels//2, :].permute(0, 2, 1).unsqueeze(1).unsqueeze(2)).squeeze(3) # [batch, height, width, channel]
++        x_sin = x_sin + phases[:, :self.channels//2].unsqueeze(1).unsqueeze(2)
++        x_sin = torch.sin(x_sin * (np.pi * 2))
++        x_sin = x_sin * amplitudes[:, :self.channels//2].unsqueeze(1).unsqueeze(2)
++        x_cos = (grids_transformed_cos.unsqueeze(3) @ freqs[:, self.channels//2:, :].permute(0, 2, 1).unsqueeze(1).unsqueeze(2)).squeeze(3) # [batch, height, width, channel]
++        x_cos = x_cos + phases[:, self.channels//2:].unsqueeze(1).unsqueeze(2)
++        x_cos = torch.sin(x_cos * (np.pi * 2))
++        x_cos = x_cos * amplitudes[:, self.channels//2:].unsqueeze(1).unsqueeze(2)
++        x = torch.cat([x_sin, x_cos], dim=-1)
++
++        # Apply trainable mapping.
++        weight = self.weight / np.sqrt(self.channels)
++        x = x @ weight.t()
++
++        # Ensure correct shape.
++        x = x.permute(0, 3, 1, 2) # [batch, channel, height, width]
++        misc.assert_shape(x, [w.shape[0], self.channels, int(self.size[1]), int(self.size[0])])
++        return x
++
++
+ #----------------------------------------------------------------------------
+ 
+ @persistence.persistent_class
+@@ -276,6 +397,9 @@
+         use_radial_filters  = False,    # Use radially symmetric downsampling filter? Ignored for critically sampled layers.
+         conv_clamp          = 256,      # Clamp the output to [-X, +X], None = disable clamping.
+         magnitude_ema_beta  = 0.999,    # Decay rate for the moving average of input magnitudes.
++
++        # added
++        use_scale_affine = False
+     ):
+         super().__init__()
+         self.w_dim = w_dim
+@@ -326,7 +450,12 @@
+         pad_hi = pad_total - pad_lo
+         self.padding = [int(pad_lo[0]), int(pad_hi[0]), int(pad_lo[1]), int(pad_hi[1])]
+ 
+-    def forward(self, x, w, noise_mode='random', force_fp32=False, update_emas=False):
++        # added
++        self.use_scale_affine = use_scale_affine
++        if self.use_scale_affine:
++            self.scale_affine = FullyConnectedLayer(self.w_dim, self.in_channels, bias_init=0)
++
++    def forward(self, x, w, scale=None, noise_mode='random', force_fp32=False, update_emas=False):
+         assert noise_mode in ['random', 'const', 'none'] # unused
+         misc.assert_shape(x, [None, self.in_channels, int(self.in_size[1]), int(self.in_size[0])])
+         misc.assert_shape(w, [x.shape[0], self.w_dim])
+@@ -340,6 +469,12 @@
+ 
+         # Execute affine layer.
+         styles = self.affine(w)
++        # added here
++        if self.use_scale_affine:
++            assert(scale is not None)
++            styles_scale = self.scale_affine(scale)
++            styles = styles + styles_scale # equivalent to concatenation
++
+         if self.is_torgb:
+             weight_gain = 1 / np.sqrt(self.in_channels * (self.conv_kernel ** 2))
+             styles = styles * weight_gain
+@@ -411,6 +546,8 @@
+         margin_size         = 10,       # Number of additional pixels outside the image.
+         output_scale        = 0.25,     # Scale factor for the output image.
+         num_fp16_res        = 4,        # Use FP16 for the N highest resolutions.
++        training_mode       = 'global', # training mode for input layer
++        fov                 = None,     # Specify FOV for 360 model
+         **layer_kwargs,                 # Arguments for SynthesisLayer.
+     ):
+         super().__init__()
+@@ -440,9 +577,17 @@
+         channels[-1] = self.img_channels
+ 
+         # Construct layers.
++        if '360' not in training_mode:
+         self.input = SynthesisInput(
+             w_dim=self.w_dim, channels=int(channels[0]), size=int(sizes[0]),
+-            sampling_rate=sampling_rates[0], bandwidth=cutoffs[0])
++                sampling_rate=sampling_rates[0], bandwidth=cutoffs[0],
++                margin_size=margin_size)
++        else:
++            assert(fov is not None)
++            self.input = SynthesisInput360(
++                w_dim=self.w_dim, channels=int(channels[0]), size=int(sizes[0]),
++                sampling_rate=sampling_rates[0], bandwidth=cutoffs[0],
++                margin_size=margin_size, fov=fov)
+         self.layer_names = []
+         for idx in range(self.num_layers + 1):
+             prev = max(idx - 1, 0)
+@@ -461,14 +606,19 @@
+             setattr(self, name, layer)
+             self.layer_names.append(name)
+ 
+-    def forward(self, ws, **layer_kwargs):
++    def forward(self, ws, mapped_scale=None, transform=None, crop_fn=None, **layer_kwargs):
+         misc.assert_shape(ws, [None, self.num_ws, self.w_dim])
+         ws = ws.to(torch.float32).unbind(dim=1)
++        if mapped_scale is not None:
++            scale = mapped_scale.to(torch.float32).unbind(dim=1)
++        else:
++            scale = [None] * self.num_ws
++        # ws is a list of ws for every layer
+ 
+         # Execute layers.
+-        x = self.input(ws[0])
+-        for name, w in zip(self.layer_names, ws[1:]):
+-            x = getattr(self, name)(x, w, **layer_kwargs)
++        x = self.input(ws[0], transform=transform, crop_fn=crop_fn)
++        for name, w , sc in zip(self.layer_names, ws[1:], scale[1:]):
++            x = getattr(self, name)(x, w, sc, **layer_kwargs)
+         if self.output_scale != 1:
+             x = x * self.output_scale
+ 
+@@ -495,6 +645,8 @@
+         img_resolution,             # Output resolution.
+         img_channels,               # Number of output color channels.
+         mapping_kwargs      = {},   # Arguments for MappingNetwork.
++        training_mode        = 'global',
++        scale_mapping_kwargs = {},  # Arguments for Scale Mapping Network
+         **synthesis_kwargs,         # Arguments for SynthesisNetwork.
+     ):
+         super().__init__()
+@@ -503,13 +655,65 @@
+         self.w_dim = w_dim
+         self.img_resolution = img_resolution
+         self.img_channels = img_channels
+-        self.synthesis = SynthesisNetwork(w_dim=w_dim, img_resolution=img_resolution, img_channels=img_channels, **synthesis_kwargs)
++        self.training_mode = training_mode
++        self.scale_mapping_kwargs = scale_mapping_kwargs
++        use_scale_affine = True if 'patch' in self.training_mode else False # add affine layer on style input
++        self.synthesis = SynthesisNetwork(w_dim=w_dim, img_resolution=img_resolution, img_channels=img_channels,
++                                          training_mode=training_mode, use_scale_affine=use_scale_affine,
++                                          **synthesis_kwargs)
+         self.num_ws = self.synthesis.num_ws
+         self.mapping = MappingNetwork(z_dim=z_dim, c_dim=c_dim, w_dim=w_dim, num_ws=self.num_ws, **mapping_kwargs)
++        if 'patch' in self.training_mode:
++            self.scale_mapping_kwargs = scale_mapping_kwargs
++            scale_mapping_norm = scale_mapping_kwargs.scale_mapping_norm
++            scale_mapping_min = scale_mapping_kwargs.scale_mapping_min
++            scale_mapping_max = scale_mapping_kwargs.scale_mapping_max
++            if scale_mapping_norm == 'zerocentered':
++                self.scale_norm = ScaleNormalizeZeroCentered(scale_mapping_min, scale_mapping_max)
++                scale_in_dim = 1
++            elif scale_mapping_norm == 'positive':
++                self.scale_norm = ScaleNormalizePositive(scale_mapping_min, scale_mapping_max)
++                scale_in_dim = 1
++            else:
++                assert(False)
++            self.scale_mapping = MappingNetwork(z_dim=scale_in_dim, c_dim=c_dim, w_dim=w_dim, num_ws=self.num_ws, **mapping_kwargs)
++
+ 
+-    def forward(self, z, c, truncation_psi=1, truncation_cutoff=None, update_emas=False, **synthesis_kwargs):
++    def forward(self, z, c, transform=None, truncation_psi=1, truncation_cutoff=None, update_emas=False, **synthesis_kwargs):
+         ws = self.mapping(z, c, truncation_psi=truncation_psi, truncation_cutoff=truncation_cutoff, update_emas=update_emas)
+-        img = self.synthesis(ws, update_emas=update_emas, **synthesis_kwargs)
++        if transform is None:
++            scale = torch.ones(z.shape[0], 1).to(z.device)
++        else:
++            scale = 1/transform[:, [0], 0]
++        if self.scale_mapping_kwargs:
++            scale = self.scale_norm(scale)
++            mapped_scale = self.scale_mapping(scale, c, update_emas=update_emas)
++        else:
++            mapped_scale = None
++        img = self.synthesis(ws, mapped_scale=mapped_scale, transform=transform, update_emas=update_emas, **synthesis_kwargs)
+         return img
+ 
+ #----------------------------------------------------------------------------
++@persistence.persistent_class
++class ScaleNormalizeZeroCentered(torch.nn.Module):
++    def __init__(self, scale_mapping_min, scale_mapping_max):
++        super().__init__()
++        self.scale_mapping_min = scale_mapping_min
++        self.scale_mapping_max = scale_mapping_max
++
++    def forward(self, scale):
++        # remaps scale to (-1, 1)
++        scale = (scale - self.scale_mapping_min) / (self.scale_mapping_max - self.scale_mapping_min)
++        return 2 * scale - 1
++
++@persistence.persistent_class
++class ScaleNormalizePositive(torch.nn.Module):
++    def __init__(self, scale_mapping_min, scale_mapping_max):
++        super().__init__()
++        self.scale_mapping_min = scale_mapping_min
++        self.scale_mapping_max = scale_mapping_max
++
++    def forward(self, scale):
++        # add a small offset to avoid zero point: [0.1 to 1.1]
++        scale = (scale - self.scale_mapping_min) / (self.scale_mapping_max - self.scale_mapping_min)
++        return scale + 0.1
+Only in training: __pycache__
+diff -bur ./stylegan3/training/training_loop.py training/training_loop.py
+--- ./stylegan3/training/training_loop.py	2021-11-24 13:11:24.000000000 -0500
++++ training/training_loop.py	2022-05-17 18:02:20.264047277 -0400
+@@ -26,6 +26,10 @@
+ import legacy
+ from metrics import metric_main
+ 
++from util import util
++import random
++from metrics import equivariance
++
+ #----------------------------------------------------------------------------
+ 
+ def setup_snapshot_image_grid(training_set, random_seed=0):
+@@ -89,7 +93,8 @@
+ 
+ def training_loop(
+     run_dir                 = '.',      # Output directory.
+-    training_set_kwargs     = {},       # Options for training set.
++    training_set_kwargs     = {},       # Options for base training set.
++    patch_kwargs     = {},         # Options for patch dataset.
+     data_loader_kwargs      = {},       # Options for torch.utils.data.DataLoader.
+     G_kwargs                = {},       # Options for generator network.
+     D_kwargs                = {},       # Options for discriminator network.
+@@ -120,6 +125,7 @@
+     cudnn_benchmark         = True,     # Enable torch.backends.cudnn.benchmark?
+     abort_fn                = None,     # Callback function for determining whether to abort training. Must return consistent results across ranks.
+     progress_fn             = None,     # Callback function for updating training progress. Called for all ranks.
++    added_kwargs = {}, # added
+ ):
+     # Initialize.
+     start_time = time.time()
+@@ -132,12 +138,17 @@
+     conv2d_gradfix.enabled = True                       # Improves training speed.
+     grid_sample_gradfix.enabled = True                  # Avoids errors with the augmentation pipe.
+ 
++    # ADDED: to prevent data_loader pin_memory to load to device 0 for every process
++    torch.cuda.set_device(device)
++    training_mode = G_kwargs.training_mode
++
+     # Load training set.
+     if rank == 0:
+         print('Loading training set...')
+     training_set = dnnlib.util.construct_class_by_name(**training_set_kwargs) # subclass of training.dataset.Dataset
+     training_set_sampler = misc.InfiniteSampler(dataset=training_set, rank=rank, num_replicas=num_gpus, seed=random_seed)
+     training_set_iterator = iter(torch.utils.data.DataLoader(dataset=training_set, sampler=training_set_sampler, batch_size=batch_size//num_gpus, **data_loader_kwargs))
++
+     if rank == 0:
+         print()
+         print('Num images: ', len(training_set))
+@@ -145,14 +156,56 @@
+         print('Label shape:', training_set.label_shape)
+         print()
+ 
++    # Load patch dataset
++    if 'patch' in training_mode:
++        if rank == 0:
++            print('Loading patch dataset...')
++        patch_dset = dnnlib.util.construct_class_by_name(**patch_kwargs) # subclass of training.dataset.Dataset
++        patch_dset_sampler = misc.InfiniteSampler(dataset=patch_dset, rank=rank, num_replicas=num_gpus, seed=random_seed)
++        patch_dset_iterator = iter(torch.utils.data.DataLoader(dataset=patch_dset, sampler=patch_dset_sampler, batch_size=batch_size//num_gpus, **data_loader_kwargs))
++        if rank == 0:
++            print()
++            print('Patch Num images: ', len(patch_dset))
++            print('Patch Image shape:', patch_dset.image_shape)
++            print('Patch Label shape:', patch_dset.label_shape)
++            print()
++
+     # Construct networks.
+     if rank == 0:
+         print('Constructing networks...')
+-    common_kwargs = dict(c_dim=training_set.label_dim, img_resolution=training_set.resolution, img_channels=training_set.num_channels)
++
++    # modified: use specified img_resolution
++    img_resolution = training_set.resolution
++    if 'patch' in training_mode and added_kwargs.img_size is not None:
++        img_resolution = added_kwargs.img_size
++        if rank == 0:
++            print("Using specified img resolution: %d" % img_resolution)
++        assert(added_kwargs.img_size == training_set.resolution)
++    common_kwargs = dict(c_dim=training_set.label_dim, img_resolution=img_resolution, img_channels=training_set.num_channels)
+     G = dnnlib.util.construct_class_by_name(**G_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
+     D = dnnlib.util.construct_class_by_name(**D_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
+     G_ema = copy.deepcopy(G).eval()
+ 
++
++    # copy G for teacher network: copy teacher G_ema to G_ema:,
++    # uses G state dict for the generator to align with D
++    if 'patch' in training_mode and added_kwargs.teacher is not None:
++        teacher = copy.deepcopy(G).to(device).eval()
++        # deactivate scale affine adding in teacher model; so it matches original model
++        for layer_name in teacher.synthesis.layer_names:
++            layer = getattr(teacher.synthesis, layer_name)
++            layer.use_scale_affine = False
++        if rank == 0:
++            print(f"loading teacher from {added_kwargs.teacher} on device %s! " % rank)
++            with dnnlib.util.open_url(added_kwargs.teacher) as f:
++                teacher_data = legacy.load_network_pkl(f)
++            for name, module in [('G', G), ('G_ema', teacher), ('G_ema', G_ema), ('D', D)]:
++                misc.copy_params_and_buffers(teacher_data[name], module, require_all=False)
++            print(f"done loading teacher on device %s! " % rank)
++            # util.set_requires_grad(False, teacher)
++    else:
++        teacher = None
++
+     # Resume from existing pickle.
+     if (resume_pkl is not None) and (rank == 0):
+         print(f'Resuming from "{resume_pkl}"')
+@@ -182,28 +235,39 @@
+     # Distribute across GPUs.
+     if rank == 0:
+         print(f'Distributing across {num_gpus} GPUs...')
+-    for module in [G, D, G_ema, augment_pipe]:
++    for name, module in [('G', G), ('D', D), ('G_ema', G_ema),
++                         ('teacher', teacher), ('augment', augment_pipe)]:
+         if module is not None and num_gpus > 1:
++            if rank == 0:
++                print("copied %s across gpus!" % name)
+             for param in misc.params_and_buffers(module):
+                 torch.distributed.broadcast(param, src=0)
++        elif module is None:
++            if rank == 0:
++                print("%s is None; not copied!" % name)
+ 
+     # Setup training phases.
+     if rank == 0:
+         print('Setting up training phases...')
+-    loss = dnnlib.util.construct_class_by_name(device=device, G=G, D=D, augment_pipe=augment_pipe, **loss_kwargs) # subclass of training.loss.Loss
++    loss = dnnlib.util.construct_class_by_name(device=device, G=G, D=D, augment_pipe=augment_pipe,
++                                               added_kwargs=added_kwargs, teacher=teacher, **loss_kwargs) # subclass of training.loss.Loss
++
+     phases = []
+-    for name, module, opt_kwargs, reg_interval in [('G', G, G_opt_kwargs, G_reg_interval), ('D', D, D_opt_kwargs, D_reg_interval)]:
++
++    for name, module, params, opt_kwargs, reg_interval in [('G', G, G.parameters(), G_opt_kwargs, G_reg_interval),
++                                                           ('D', D, D.parameters(), D_opt_kwargs, D_reg_interval)]:
+         if reg_interval is None:
+-            opt = dnnlib.util.construct_class_by_name(params=module.parameters(), **opt_kwargs) # subclass of torch.optim.Optimizer
++            opt = dnnlib.util.construct_class_by_name(params=params, **opt_kwargs) # subclass of torch.optim.Optimizer
+             phases += [dnnlib.EasyDict(name=name+'both', module=module, opt=opt, interval=1)]
+         else: # Lazy regularization.
+             mb_ratio = reg_interval / (reg_interval + 1)
+             opt_kwargs = dnnlib.EasyDict(opt_kwargs)
+             opt_kwargs.lr = opt_kwargs.lr * mb_ratio
+             opt_kwargs.betas = [beta ** mb_ratio for beta in opt_kwargs.betas]
+-            opt = dnnlib.util.construct_class_by_name(module.parameters(), **opt_kwargs) # subclass of torch.optim.Optimizer
++            opt = dnnlib.util.construct_class_by_name(params, **opt_kwargs) # subclass of torch.optim.Optimizer
+             phases += [dnnlib.EasyDict(name=name+'main', module=module, opt=opt, interval=1)]
+             phases += [dnnlib.EasyDict(name=name+'reg', module=module, opt=opt, interval=reg_interval)]
++
+     for phase in phases:
+         phase.start_event = None
+         phase.end_event = None
+@@ -223,6 +287,7 @@
+         grid_c = torch.from_numpy(labels).to(device).split(batch_gpu)
+         images = torch.cat([G_ema(z=z, c=c, noise_mode='const').cpu() for z, c in zip(grid_z, grid_c)]).numpy()
+         save_image_grid(images, os.path.join(run_dir, 'fakes_init.png'), drange=[-1,1], grid_size=grid_size)
++        print('Done exporting sample images...')
+ 
+     # Initialize logs.
+     if rank == 0:
+@@ -252,12 +317,35 @@
+     if progress_fn is not None:
+         progress_fn(0, total_kimg)
+     while True:
+-
+-        # Fetch training data.
+         with torch.autograd.profiler.record_function('data_fetch'):
++            if 'patch' in training_mode:
++                if random.uniform(0, 1) > added_kwargs.base_probability:
++                    # base dataset iterator
++                    phase_real_img, phase_real_c = next(training_set_iterator)
++                    n = phase_real_img.shape[0]
++                    phase_real_img = (phase_real_img.to(device).to(torch.float32) / 127.5 - 1).split(batch_gpu)
++                    phase_real_c = phase_real_c.to(device).split(batch_gpu)
++                    transform = torch.eye(3)[None]
++                    phase_transform = transform.repeat(n, 1, 1).to(device).split(batch_gpu)
++                    min_scale = 1.0
++                    max_scale = 1.0
++                else:
++                    # patch dataset iterator
++                    data, phase_real_c = next(patch_dset_iterator)
++                    phase_real_img = (data['image'].to(device).to(torch.float32) / 127.5 - 1).split(batch_gpu)
++                    phase_real_c = phase_real_c.to(device).split(batch_gpu)
++                    phase_transform = data['params']['transform'].to(device).split(batch_gpu)
++                    min_scale = data['params']['min_scale_anneal'][0].item()
++                    max_scale = 1.0
++            else:
+             phase_real_img, phase_real_c = next(training_set_iterator)
+             phase_real_img = (phase_real_img.to(device).to(torch.float32) / 127.5 - 1).split(batch_gpu)
+             phase_real_c = phase_real_c.to(device).split(batch_gpu)
++                # dummy variables
++                phase_transform = [None] * len(phase_real_c)
++                min_scale = 1.0
++                max_scale = 1.0
++
+             all_gen_z = torch.randn([len(phases) * batch_size, G.z_dim], device=device)
+             all_gen_z = [phase_gen_z.split(batch_gpu) for phase_gen_z in all_gen_z.split(batch_size)]
+             all_gen_c = [training_set.get_label(np.random.randint(len(training_set))) for _ in range(len(phases) * batch_size)]
+@@ -274,8 +362,10 @@
+             # Accumulate gradients.
+             phase.opt.zero_grad(set_to_none=True)
+             phase.module.requires_grad_(True)
+-            for real_img, real_c, gen_z, gen_c in zip(phase_real_img, phase_real_c, phase_gen_z, phase_gen_c):
+-                loss.accumulate_gradients(phase=phase.name, real_img=real_img, real_c=real_c, gen_z=gen_z, gen_c=gen_c, gain=phase.interval, cur_nimg=cur_nimg)
++            for transform, real_img, real_c, gen_z, gen_c in zip(phase_transform, phase_real_img, phase_real_c, phase_gen_z, phase_gen_c):
++                loss.accumulate_gradients(phase=phase.name, real_img=real_img, real_c=real_c, transform=transform,
++                                          gen_z=gen_z, gen_c=gen_c, gain=phase.interval, cur_nimg=cur_nimg,
++                                          min_scale=min_scale, max_scale=max_scale)
+             phase.module.requires_grad_(False)
+ 
+             # Update weights.
