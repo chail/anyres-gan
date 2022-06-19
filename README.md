@@ -1,5 +1,4 @@
-#
-Anyres-GAN
+# Anyres-GAN
 [Project Page](https://chail.github.io/anyres-gan/) | [Paper](https://arxiv.org/abs/2204.07156) | [Bibtex](https://chail.github.io/anyres-gan/bibtex.txt)
 
 Any-resolution Training for High-resolution Image Synthesis.\
