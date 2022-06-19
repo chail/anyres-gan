@@ -147,6 +147,7 @@ If you use this code for your research, please cite our paper:
   year={2022}
 }
 ```
+
 <p align="center">
 <img src='img/pano010-2.gif' width=600px>
 <img src='img/pano010.png' width=600px>
