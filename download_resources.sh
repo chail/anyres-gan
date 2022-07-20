@@ -1,5 +1,5 @@
 base_url=http://latent-composition.csail.mit.edu/other_projects/anyres_gan/pretrained
-target_dir=pretrained2
+target_dir=pretrained
 mkdir -p $target_dir
 wget $base_url/bird_pretrained_final.pkl -P $target_dir
 wget $base_url/church_pretrained_final.pkl -P $target_dir
