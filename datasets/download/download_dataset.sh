@@ -5,4 +5,5 @@ python download_dataset.py --filelist flickr_birds_HR.txt --minsize 512 --maxsiz
 # python download_dataset.py --filelist flickr_birds_LR.txt --minsize 256
 
 ### church HR: min = 1024, no max
+### NOTE: these images were then center cropped for training
 # python download_dataset.py --filelist flickr_church_exteriors_HR.txt --minsize 1024 --download_HR

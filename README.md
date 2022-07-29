@@ -115,7 +115,10 @@ Training progress can be visualized using:
 tensorboard --logdir training-runs/
 ```
 
-Note on datasets: beyond the standard FFHQ and LSUN Church datasets, we train on datasets scraped from flickr. Due to licensing we cannot release this images directly. Please see `datasets/download/download_dataset.sh` for examples on how to download the flickr datasets. You will need to fill in a flickr api key and secret.
+## Datasets
+Beyond the standard FFHQ and LSUN Church datasets, we train on datasets scraped from flickr. Due to licensing we cannot release this images directly. Please see `datasets/download/download_dataset.sh` for examples on how to download the flickr datasets. You will need to fill in a flickr api key and secret. 
+
+For the LSUN Church dataset, you can follow the standard stylegan [data preparation](https://github.com/NVlabs/stylegan3/blob/main/dataset_tool.py) and use the resulting archive for training.
 
 <a name="evaluation"/>
 
