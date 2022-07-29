@@ -115,9 +115,9 @@ Training progress can be visualized using:
 tensorboard --logdir training-runs/
 ```
 
-Note on datasets: beyond the standard FFHQ and LSUN Church datasets, we train on datasets scraped from flickr. Due to licensing we cannot release this images directly but can provide the image IDs used to construct the datasets.
+Note on datasets: beyond the standard FFHQ and LSUN Church datasets, we train on datasets scraped from flickr. Due to licensing we cannot release this images directly. Please see `datasets/download/download_dataset.sh` for examples on how to download the flickr datasets. You will need to fill in a flickr api key and secret.
 
-<a name="evalution"/>
+<a name="evaluation"/>
 
 ## Evaluations
 
