@@ -5,12 +5,6 @@ import argparse
 from tqdm import tqdm
 from PIL import Image
 
-# file list
-# min size
-# max size
-
-
-# python data/trace_data.py [[PATH]]
 parser = argparse.ArgumentParser()
 parser.add_argument('--filelist', type=str, required=True)
 parser.add_argument('--minsize', type=int)
