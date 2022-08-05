@@ -137,18 +137,18 @@ Note: the released pretrained models are reimplementations of the models used in
 
 ### Acknowledgements
 
-Our code is largely based on the [Stylegan3](https://github.com/NVlabs/stylegan3) repository ([license](./LICENSE_stylegan.txt)). Changes to the StyleGAN3 code are documented in [diff](./diff.txt). Some additional utilities are from David Bau and Taesung Park. Remaining changes are covered under [Adobe Research License](./LICENSE.txt).
+Our code is largely based on the [Stylegan3](https://github.com/NVlabs/stylegan3) repository ([license](./LICENSE_stylegan.txt)). Changes to the StyleGAN3 code are documented in [diff](./diff.txt). Some additional utilities are from David Bau and Taesung Park, and we thank Assaf Shocher for proofreading. Remaining changes are covered under [Adobe Research License](./LICENSE.txt).
 
 <a name="citation"/>
 
 ### Citation
 If you use this code for your research, please cite our paper:
 ```
-@article{chai2022anyresolution,
-  title={Any-resolution training for high-resolution image synthesis.},
-  author={Chai, Lucy and Gharbi, Michael and Shechtman, Eli and Isola, Phillip and Zhang, Richard},
-  journal={arXiv preprint arXiv:2204.07156},
-  year={2022}
+@inproceedings{chai2022anyresolution,
+    title={Any-resolution training for high-resolution image synthesis.},
+    author={Chai, Lucy and Gharbi, Michael and Shechtman, Eli and Isola, Phillip and Zhang, Richard},
+    booktitle={European Conference on Computer Vision},
+    year={2022}
 }
 ```
 
